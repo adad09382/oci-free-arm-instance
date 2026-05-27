@@ -32,6 +32,11 @@ jobs:
           key_file=~/.oci/oci_api_key.pem
           EOF
 
+      - name: Debug - OCI CLI version and launch options
+        run: |
+          oci --version
+          oci compute instance launch --help 2>&1 | grep -A2 -i "public\|vnic\|subnet\|assign"
+
       - name: Try to create instance
         id: create
         run: |
@@ -42,9 +47,9 @@ jobs:
             --availability-domain "${{ secrets.AD_NAME }}" \
             --compartment-id "${{ secrets.OCI_COMPARTMENT_ID }}" \
             --image-id "${{ secrets.IMAGE_ID }}" \
+            --subnet-id "${{ secrets.OCI_SUBNET_ID }}" \
             --shape "VM.Standard.A1.Flex" \
             --shape-config '{"ocpus":4,"memoryInGBs":24}' \
-            --create-vnic-details "{\"assignPublicIp\":true,\"subnetId\":\"${{ secrets.OCI_SUBNET_ID }}\"}" \
             --ssh-authorized-keys-file /tmp/ssh_key.pub \
             --boot-volume-size-in-gbs 50 \
             --display-name "free-arm-instance" \
