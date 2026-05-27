@@ -1,65 +1,82 @@
-  name: Try to Create OCI VM
+name: Try to Create OCI VM
 
-  on:
-    schedule:
-      - cron: '*/10 * * * *'
-    workflow_dispatch:
-  
-  jobs:
-    create-vm:
-      runs-on: ubuntu-latest
-      steps:
-        - name: Cache pip packages
-          uses: actions/cache@v3
-          with:
-            path: ~/.cache/pip
-            key: ${{ runner.os }}-pip-oci-cli
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
 
-        - name: Install OCI CLI
-          run: pip install oci-cli --quiet
+jobs:
+  create-vm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-oci-cli
 
-        - name: Configure OCI
-          run: |
-            mkdir -p ~/.oci
-            echo "${{ secrets.OCI_CLI_KEY_CONTENT }}" > ~/.oci/oci_api_key.pem
-            chmod 600 ~/.oci/oci_api_key.pem
-            cat <<EOF > ~/.oci/config
-            [DEFAULT]
-            user=${{ secrets.OCI_CLI_USER }}
-            fingerprint=${{ secrets.OCI_CLI_FINGERPRINT }}
-            tenancy=${{ secrets.OCI_CLI_TENANCY }}
-            region=${{ secrets.OCI_CLI_REGION }}
-            key_file=~/.oci/oci_api_key.pem
-            EOF
+      - name: Install OCI CLI
+        run: pip install oci-cli --quiet
 
-        - name: Try to create instance
-          id: create
-          run: |
-            OUTPUT=$(oci compute instance launch \
-              --availability-domain "${{ secrets.AD_NAME }}" \
-              --compartment-id "${{ secrets.OCI_COMPARTMENT_ID }}" \
-              --image-id "${{ secrets.IMAGE_ID }}" \
-              --subnet-id "${{ secrets.OCI_SUBNET_ID }}" \
-              --shape "VM.Standard.A1.Flex" \
-              --shape-config '{"ocpus":4,"memoryInGBs":24}' \
-              --assign-public-ip true \
-              --ssh-authorized-keys-file <(echo "${{ secrets.SSH_PUBLIC_KEY }}") \
-              --boot-volume-size-in-gbs 50 \
-              --display-name "free-arm-instance" \
-              2>&1)
-            echo "$OUTPUT"
-            echo "output=$OUTPUT" >> $GITHUB_OUTPUT
+      - name: Configure OCI
+        run: |
+          mkdir -p ~/.oci
+          echo "${{ secrets.OCI_CLI_KEY_CONTENT }}" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/oci_api_key.pem
+          cat <<EOF > ~/.oci/config
+          [DEFAULT]
+          user=${{ secrets.OCI_CLI_USER }}
+          fingerprint=${{ secrets.OCI_CLI_FINGERPRINT }}
+          tenancy=${{ secrets.OCI_CLI_TENANCY }}
+          region=${{ secrets.OCI_CLI_REGION }}
+          key_file=~/.oci/oci_api_key.pem
+          EOF
 
-        - name: Notify Discord - Success
-          if: success() && !contains(steps.create.outputs.output, 'Out of host capacity')
-          run: |
-            curl -s -X POST "${{ secrets.DISCORD_WEBHOOK_URL }}" \
-              -H "Content-Type: application/json" \
-              -d '{"embeds":[{"title":"✅ OCI VM Created!","description":"Instance created successfully. DISABLE THIS WORKFLOW NOW.","color":3066993}]}'
+      - name: Try to create instance
+        id: create
+        run: |
+          set +e
+          echo "${{ secrets.SSH_PUBLIC_KEY }}" > /tmp/ssh_key.pub
 
-        - name: Notify Discord - Out of Capacity
-          if: contains(steps.create.outputs.output, 'Out of host capacity')
-          run: |
-            curl -s -X POST "${{ secrets.DISCORD_WEBHOOK_URL }}" \
-              -H "Content-Type: application/json" \
-              -d '{"embeds":[{"title":"⏳ Out of capacity, retrying...","color":15105570}]}'
+          OUTPUT=$(oci compute instance launch \
+            --availability-domain "${{ secrets.AD_NAME }}" \
+            --compartment-id "${{ secrets.OCI_COMPARTMENT_ID }}" \
+            --image-id "${{ secrets.IMAGE_ID }}" \
+            --shape "VM.Standard.A1.Flex" \
+            --shape-config '{"ocpus":4,"memoryInGBs":24}' \
+            --create-vnic-details "{\"assignPublicIp\":true,\"subnetId\":\"${{ secrets.OCI_SUBNET_ID }}\"}" \
+            --ssh-authorized-keys-file /tmp/ssh_key.pub \
+            --boot-volume-size-in-gbs 50 \
+            --display-name "free-arm-instance" \
+            2>&1)
+
+          echo "$OUTPUT"
+
+          if echo "$OUTPUT" | grep -qi "Out of host capacity"; then
+            echo "status=capacity" >> $GITHUB_OUTPUT
+          elif echo "$OUTPUT" | grep -q '"id"'; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "status=error" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Notify Discord - Success
+        if: steps.create.outputs.status == 'success'
+        run: |
+          curl -s -X POST "${{ secrets.DISCORD_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{"embeds":[{"title":"✅ OCI VM Created!","description":"Instance created successfully. DISABLE THIS WORKFLOW NOW.","color":3066993}]}'
+
+      - name: Notify Discord - Out of Capacity
+        if: steps.create.outputs.status == 'capacity'
+        run: |
+          curl -s -X POST "${{ secrets.DISCORD_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{"embeds":[{"title":"⏳ Out of capacity, retrying...","color":15105570}]}'
+
+      - name: Notify Discord - Error
+        if: steps.create.outputs.status == 'error'
+        run: |
+          curl -s -X POST "${{ secrets.DISCORD_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{"embeds":[{"title":"❌ Unexpected Error","description":"Check the Actions log for details.","color":15158332}]}'
