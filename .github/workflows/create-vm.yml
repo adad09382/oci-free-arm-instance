@@ -1,3 +1,4 @@
+# Retries every 10 minutes until OCI ARM instance is successfully created
 name: Try to Create OCI VM
 
 on:
@@ -23,19 +24,15 @@ jobs:
           mkdir -p ~/.oci
           echo "${{ secrets.OCI_CLI_KEY_CONTENT }}" > ~/.oci/oci_api_key.pem
           chmod 600 ~/.oci/oci_api_key.pem
-          cat <<EOF > ~/.oci/config
+          cat > ~/.oci/config << 'EOF'
           [DEFAULT]
           user=${{ secrets.OCI_CLI_USER }}
           fingerprint=${{ secrets.OCI_CLI_FINGERPRINT }}
           tenancy=${{ secrets.OCI_CLI_TENANCY }}
           region=${{ secrets.OCI_CLI_REGION }}
-          key_file=~/.oci/oci_api_key.pem
+          key_file=/home/runner/.oci/oci_api_key.pem
           EOF
-
-      - name: Debug - OCI CLI version and launch options
-        run: |
-          oci --version
-          oci compute instance launch --help 2>&1 | grep -A2 -i "public\|vnic\|subnet\|assign"
+          chmod 600 ~/.oci/config
 
       - name: Try to create instance
         id: create
