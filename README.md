@@ -165,3 +165,39 @@ Your VM will be provisioning in the OCI console. You can now log in using the SS
 ## License
 
 This repository is available under the [MIT License](LICENSE).
+
+## Local Python Retry Mode
+
+For faster retries than GitHub Actions, run the local Python script. It calls OCI directly from this machine, retries every 30 seconds by default, and sends Discord only on success, unexpected errors, or every N capacity misses if configured.
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cp oci-secrets.env.example oci-secrets.env
+.venv/bin/python scripts/oci_arm_retry.py --env-file oci-secrets.env --validate-only
+.venv/bin/python scripts/oci_arm_retry.py --env-file oci-secrets.env
+```
+
+Default target (Always Free A1.Flex quota is 2 OCPUs / 12GB total as of mid-2026; the round-robin list alternates the full quota with a smaller request, which tends to land capacity sooner):
+
+```env
+OCPUS=2
+MEMORY_GBS=12
+SHAPE_CONFIGS=2:12,1:6
+RETRY_INTERVAL_SECONDS=30
+DISCORD_CAPACITY_EVERY=10
+```
+
+The script also supports the existing GitHub secret names, including `OCI_CLI_KEY_CONTENT`. For local use, `OCI_CLI_KEY_FILE=~/.oci/oci_api_key.pem` is cleaner if you have the private key file.
+
+If your home region has multiple availability domains, set a comma-separated round-robin list:
+
+```env
+AD_NAMES=eePT:PHX-AD-1,eePT:PHX-AD-2,eePT:PHX-AD-3
+```
+
+To run it with launchd, copy `local/com.wade.oci-arm-retry.plist.example` to `~/Library/LaunchAgents/com.wade.oci-arm-retry.plist`, then load it:
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.wade.oci-arm-retry.plist
+```

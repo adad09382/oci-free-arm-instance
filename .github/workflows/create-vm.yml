@@ -9,6 +9,8 @@ on:
 jobs:
   create-vm:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
     steps:
       - name: Cache pip packages
         uses: actions/cache@v4
@@ -34,50 +36,96 @@ jobs:
           EOF
           chmod 600 ~/.oci/config
 
-      - name: Try to create instance
+      - name: Try to create instances (split into two 1 OCPU / 6GB slots)
         id: create
         run: |
           set +e
           echo "${{ secrets.SSH_PUBLIC_KEY }}" > /tmp/ssh_key.pub
 
-          OUTPUT=$(oci compute instance launch \
-            --availability-domain "${{ secrets.AD_NAME }}" \
+          EXISTING=$(oci compute instance list \
             --compartment-id "${{ secrets.OCI_COMPARTMENT_ID }}" \
-            --image-id "${{ secrets.IMAGE_ID }}" \
-            --subnet-id "${{ secrets.OCI_SUBNET_ID }}" \
-            --shape "VM.Standard.A1.Flex" \
-            --shape-config '{"ocpus":4,"memoryInGBs":24}' \
-            --ssh-authorized-keys-file /tmp/ssh_key.pub \
-            --boot-volume-size-in-gbs 50 \
-            --display-name "free-arm-instance" \
-            2>&1)
+            --lifecycle-state RUNNING \
+            --query "data[?contains(\"display-name\", 'free-arm-instance-')].\"display-name\"" \
+            --raw-output 2>/dev/null)
 
-          echo "$OUTPUT"
+          NEW_SUCCESS="false"
+          ANY_CAPACITY="false"
+          ANY_ERROR="false"
 
-          if echo "$OUTPUT" | grep -qi "Out of host capacity"; then
-            echo "status=capacity" >> $GITHUB_OUTPUT
-          elif echo "$OUTPUT" | grep -q '"id"'; then
-            echo "status=success" >> $GITHUB_OUTPUT
-          else
-            echo "status=error" >> $GITHUB_OUTPUT
-          fi
+          for SLOT in 1 2; do
+            NAME="free-arm-instance-${SLOT}"
+
+            if echo "$EXISTING" | grep -q "\"$NAME\""; then
+              echo "Slot $SLOT ($NAME) already exists, skipping."
+              continue
+            fi
+
+            echo "Trying slot $SLOT ($NAME): 1 OCPU / 6GB..."
+            OUTPUT=$(oci compute instance launch \
+              --availability-domain "${{ secrets.AD_NAME }}" \
+              --compartment-id "${{ secrets.OCI_COMPARTMENT_ID }}" \
+              --image-id "${{ secrets.IMAGE_ID }}" \
+              --subnet-id "${{ secrets.OCI_SUBNET_ID }}" \
+              --shape "VM.Standard.A1.Flex" \
+              --shape-config '{"ocpus":1,"memoryInGBs":6}' \
+              --ssh-authorized-keys-file /tmp/ssh_key.pub \
+              --boot-volume-size-in-gbs 50 \
+              --display-name "$NAME" \
+              2>&1)
+
+            echo "$OUTPUT"
+
+            if echo "$OUTPUT" | grep -qi "Out of host capacity"; then
+              ANY_CAPACITY="true"
+            elif echo "$OUTPUT" | grep -q '"id"'; then
+              NEW_SUCCESS="true"
+            else
+              ANY_ERROR="true"
+            fi
+          done
+
+          REMAINING=$(oci compute instance list \
+            --compartment-id "${{ secrets.OCI_COMPARTMENT_ID }}" \
+            --lifecycle-state RUNNING \
+            --query "length(data[?contains(\"display-name\", 'free-arm-instance-')])" \
+            --raw-output 2>/dev/null)
+
+          echo "new_success=$NEW_SUCCESS" >> $GITHUB_OUTPUT
+          echo "any_capacity=$ANY_CAPACITY" >> $GITHUB_OUTPUT
+          echo "any_error=$ANY_ERROR" >> $GITHUB_OUTPUT
+          echo "all_filled=$([ "$REMAINING" = "2" ] && echo true || echo false)" >> $GITHUB_OUTPUT
 
       - name: Notify Discord - Success
-        if: steps.create.outputs.status == 'success'
+        if: steps.create.outputs.new_success == 'true'
         run: |
           curl -s -X POST "${{ secrets.DISCORD_WEBHOOK_URL }}" \
             -H "Content-Type: application/json" \
-            -d '{"embeds":[{"title":"✅ OCI VM Created!","description":"Instance created successfully. DISABLE THIS WORKFLOW NOW.","color":3066993}]}'
+            -d '{"embeds":[{"title":"✅ OCI VM Created!","description":"An A1.Flex instance (1 OCPU / 6GB) was created.","color":3066993}]}'
+
+      - name: Notify Discord - Both slots filled
+        if: steps.create.outputs.all_filled == 'true'
+        run: |
+          curl -s -X POST "${{ secrets.DISCORD_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{"embeds":[{"title":"🎉 Full Always Free A1 quota claimed!","description":"Both 1 OCPU / 6GB instances are running. Workflow has been automatically disabled.","color":3066993}]}'
+
+      - name: Disable workflow once both slots are filled
+        if: steps.create.outputs.all_filled == 'true'
+        run: |
+          curl -s -X PUT \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/create-vm.yml/disable"
 
       - name: Notify Discord - Out of Capacity
-        if: steps.create.outputs.status == 'capacity'
+        if: steps.create.outputs.any_capacity == 'true' && steps.create.outputs.new_success == 'false'
         run: |
           curl -s -X POST "${{ secrets.DISCORD_WEBHOOK_URL }}" \
             -H "Content-Type: application/json" \
             -d '{"embeds":[{"title":"⏳ Out of capacity, retrying...","color":15105570}]}'
 
       - name: Notify Discord - Error
-        if: steps.create.outputs.status == 'error'
+        if: steps.create.outputs.any_error == 'true'
         run: |
           curl -s -X POST "${{ secrets.DISCORD_WEBHOOK_URL }}" \
             -H "Content-Type: application/json" \

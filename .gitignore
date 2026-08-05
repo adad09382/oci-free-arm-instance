@@ -1,0 +1,7 @@
+oci-secrets.env
+trigger.log
+trigger.sh
+.venv/
+__pycache__/
+*.pyc
+*.log

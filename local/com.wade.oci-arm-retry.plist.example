@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.wade.oci-arm-retry</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/wade/Documents/project/personal/adad09382/oci-free-arm-instance/scripts/run_local_retry.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/wade/Documents/project/personal/adad09382/oci-free-arm-instance</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/wade/Documents/project/personal/adad09382/oci-free-arm-instance/local-retry.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/wade/Documents/project/personal/adad09382/oci-free-arm-instance/local-retry.log</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
